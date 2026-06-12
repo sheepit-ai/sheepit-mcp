@@ -1,0 +1,67 @@
+{
+  "name": "@sheepit-ai/mcp",
+  "version": "1.0.1",
+  "description": "Sheepit MCP server — Claude / Cursor / Codex talk to your Sheepit project (campaigns, flags, experiments, dashboards) directly from the IDE",
+  "license": "MIT",
+  "author": "GoaTech AI LLC",
+  "homepage": "https://github.com/sheepit-ai/sheepit-mcp#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sheepit-ai/sheepit-mcp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/sheepit-ai/sheepit-mcp/issues"
+  },
+  "keywords": [
+    "sheepit",
+    "mcp",
+    "model-context-protocol",
+    "claude",
+    "cursor",
+    "ai",
+    "growth",
+    "campaigns",
+    "feature-flags",
+    "experiments"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "type": "module",
+  "bin": {
+    "sheepit-mcp": "dist/index.js"
+  },
+  "main": "./dist/index.js",
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "SECURITY.md"
+  ],
+  "scripts": {
+    "prebuild": "tsx scripts/gen-build-meta.ts",
+    "build": "tsup && chmod +x dist/index.js",
+    "predev": "tsx scripts/gen-build-meta.ts",
+    "dev": "tsx src/index.ts",
+    "pretest": "tsx scripts/gen-build-meta.ts",
+    "pretypecheck": "tsx scripts/gen-build-meta.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "prepublishOnly": "pnpm build"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "zod": "^3.25.0",
+    "zod-to-json-schema": "^3.24.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "tsup": "^8.0.0",
+    "tsx": "^4",
+    "typescript": "^5",
+    "vitest": "^2"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

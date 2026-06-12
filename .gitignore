@@ -1,0 +1,6 @@
+node_modules/
+dist/
+*.tsbuildinfo
+.DS_Store
+# Generated at build time by scripts/gen-build-meta.ts
+src/generated/build-meta.ts
