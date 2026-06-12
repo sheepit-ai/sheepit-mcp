@@ -51,8 +51,18 @@ async function runInstallFresh(args: string[]): Promise<void> {
   }
 }
 
+// Mirrors the platform branch in install.ts resolveTargets() so the suite
+// passes on whatever OS it runs on (macOS dev machines + Linux CI). Both
+// install.ts (via os.homedir()) and these tests honor the hijacked $HOME /
+// $APPDATA set in beforeEach.
 function claudeDesktopPath(): string {
-  return join(tmpHome, "Library", "Application Support", "Claude", "claude_desktop_config.json");
+  if (process.platform === "darwin") {
+    return join(tmpHome, "Library", "Application Support", "Claude", "claude_desktop_config.json");
+  }
+  if (process.platform === "win32") {
+    return join(process.env["APPDATA"] ?? tmpHome, "Claude", "claude_desktop_config.json");
+  }
+  return join(tmpHome, ".config", "Claude", "claude_desktop_config.json");
 }
 
 const NEW_ENTRY = {
