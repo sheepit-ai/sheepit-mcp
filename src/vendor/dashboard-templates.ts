@@ -1,6 +1,11 @@
 /**
  * Dashboard template blueprints — vendored from the Sheepit API contract.
  *
+ * LOC-budget exemption: this is a vendored data-only registry (template
+ * blueprint objects + two tiny factory helpers, one concern). It exceeds
+ * the 500-LOC soft cap because the data is the file; splitting would not
+ * separate concerns (Fowler Divergent Change test passes). Do not split.
+ *
  * These are the "starter dashboards" a project can be seeded with. Each
  * blueprint is UI-agnostic: it describes the dashboard NAME, DESCRIPTION,
  * ICON, and the full WIDGET SET (each widget = a query + viz + position),
