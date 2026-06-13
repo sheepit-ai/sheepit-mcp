@@ -42,7 +42,4 @@ export {
 
 // Dashboard templates
 export { DASHBOARD_TEMPLATE_BLUEPRINTS, findTemplateBlueprint } from "./dashboard-templates.js";
-export type {
-  DashboardTemplateBlueprint,
-  DashboardTemplateWidget,
-} from "./dashboard-templates.js";
+export type { DashboardTemplateBlueprint, DashboardTemplateWidget } from "./dashboard-templates.js";

@@ -12,16 +12,16 @@ actually send, plus their transitive Zod dependencies.
 
 ## Files
 
-| File | Contract |
-|---|---|
-| `rule-conditions.ts` | `RuleCondition[]` predicate shape (audiences, filters) |
-| `insights-query.ts` | the Insights Query DSL (timeseries) + widget viz/position |
-| `campaign-schemas.ts` | campaign create / update / launch / list |
-| `destination-schemas.ts` | destination create / update / test / list |
-| `user-group-schemas.ts` | user-group create / list |
-| `dashboard-schemas.ts` | dashboard + widget CRUD + insights-query request |
-| `dashboard-templates.ts` | starter-dashboard blueprints |
-| `index.ts` | thin barrel — re-exports exactly what the tools import |
+| File                     | Contract                                                  |
+| ------------------------ | --------------------------------------------------------- |
+| `rule-conditions.ts`     | `RuleCondition[]` predicate shape (audiences, filters)    |
+| `insights-query.ts`      | the Insights Query DSL (timeseries) + widget viz/position |
+| `campaign-schemas.ts`    | campaign create / update / launch / list                  |
+| `destination-schemas.ts` | destination create / update / test / list                 |
+| `user-group-schemas.ts`  | user-group create / list                                  |
+| `dashboard-schemas.ts`   | dashboard + widget CRUD + insights-query request          |
+| `dashboard-templates.ts` | starter-dashboard blueprints                              |
+| `index.ts`               | thin barrel — re-exports exactly what the tools import    |
 
 ## Keeping in sync
 

@@ -33,10 +33,10 @@
   },
   "main": "./dist/index.js",
   "files": [
-    "dist",
-    "README.md",
     "LICENSE",
-    "SECURITY.md"
+    "README.md",
+    "SECURITY.md",
+    "dist"
   ],
   "scripts": {
     "prebuild": "tsx scripts/gen-build-meta.ts",
@@ -44,10 +44,10 @@
     "predev": "tsx scripts/gen-build-meta.ts",
     "dev": "tsx src/index.ts",
     "pretest": "tsx scripts/gen-build-meta.ts",
-    "pretypecheck": "tsx scripts/gen-build-meta.ts",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
-    "prepublishOnly": "pnpm build"
+    "prepublishOnly": "pnpm build",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "pretypecheck": "tsx scripts/gen-build-meta.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",
