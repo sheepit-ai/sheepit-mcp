@@ -1,6 +1,6 @@
 /**
  * Read Sheepit credentials from `~/.sheepit/credentials.json` — the
- * same file populated by `sheepit login` (see packages/cli). Sharing
+ * same file populated by `sheepit login` (the Sheepit CLI). Sharing
  * the file means both surfaces (CLI + MCP) authenticate via a single
  * PKCE round-trip and stay in sync.
  *

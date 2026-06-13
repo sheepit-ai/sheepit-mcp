@@ -15,7 +15,7 @@
  *   release.version, release.pr_title, release.branch — customer-controlled
  *   regression.version, regression.change_entity_key — flag/entity key
  *
- * Reference: packages/mcp/src/lib/untrust.ts for the sanitise + wrap pattern.
+ * Reference: src/lib/untrust.ts for the sanitise + wrap pattern.
  */
 
 import { z } from "zod";

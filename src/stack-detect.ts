@@ -21,7 +21,7 @@ export interface DetectedStack {
 
 export function detectStack(cwd: string): DetectedStack {
   // Walk up at most 3 levels — enough to find the project root from a
-  // sub-directory (apps/web/) without hitting random unrelated trees.
+  // nested sub-directory without hitting random unrelated trees.
   let dir = cwd;
   for (let i = 0; i < 4; i++) {
     const pkg = join(dir, "package.json");
