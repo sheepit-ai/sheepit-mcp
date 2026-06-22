@@ -1,6 +1,6 @@
 {
   "name": "@sheepit-ai/mcp",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Sheepit MCP server — Claude / Cursor / Codex talk to your Sheepit project (campaigns, flags, experiments, dashboards) directly from the IDE",
   "license": "MIT",
   "author": "GoaTech AI LLC",
