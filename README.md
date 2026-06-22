@@ -141,6 +141,23 @@ leaves the process for any session or tool call. Telemetry already
 never throws and never blocks your tool calls; the opt-out just stops
 the emit entirely.
 
+## On-demand tool loading (experimental, opt-in)
+
+By default the server advertises all tools, so their schemas load into your
+agent's context every session. Set `SHEEPIT_MCP_LAZY_TOOLS=1` to advertise only
+a small **core** set plus two discovery tools (`search_tools`, `load_tool`); the
+rest stay callable but load their schemas on demand — ~65% less upfront tool-schema
+context. When you need a tool that isn't listed, the agent calls `search_tools` to
+find it and `load_tool` to fetch its schema, then calls it by name.
+
+```bash
+SHEEPIT_MCP_LAZY_TOOLS=1   # advertise core + discovery tools only (default: off)
+```
+
+This is **off by default** while we measure both modes (the
+`$mcp_tools_listed` event now carries `lazy`, `advertised_count`, and
+`schema_bytes`).
+
 ## CLI
 
 ```bash

@@ -69,6 +69,32 @@ export const insightsQueryRequestSchema = z.object({
 });
 export type InsightsQueryRequest = z.infer<typeof insightsQueryRequestSchema>;
 
+// ── Materialize (atomic dashboard + widgets in one call) ─────────────────
+
+/**
+ * Payload schema for `POST /v1/dashboards/materialize`.
+ * Creates the Dashboard + all Widget rows in a single Prisma $transaction.
+ *
+ * Keep in sync with `packages/shared/src/insights/materialize.ts`.
+ */
+export const materializeWidgetSchema = z.object({
+  type: widgetTypeSchema,
+  name: z.string().max(120),
+  description: z.string().max(500).optional(),
+  query: insightsQuerySchema,
+  viz: widgetVizSchema.optional(),
+  position: widgetPositionSchema.optional(),
+});
+export type MaterializeWidgetInput = z.infer<typeof materializeWidgetSchema>;
+
+export const dashboardMaterializeSchema = z.object({
+  name: z.string().min(1).max(120).describe("Human-readable name for the new dashboard."),
+  description: z.string().max(500).optional(),
+  layout: z.record(z.string(), z.unknown()).optional(),
+  widgets: z.array(materializeWidgetSchema).min(1).max(24),
+});
+export type DashboardMaterializeInput = z.infer<typeof dashboardMaterializeSchema>;
+
 // ── Template id (string, validated against the registry at use-site) ────
 
 /**

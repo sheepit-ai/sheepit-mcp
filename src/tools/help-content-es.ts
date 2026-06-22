@@ -193,7 +193,7 @@ una UI. La allowlist de bases JSON es \`event_properties\` y
     "interval": "day",
     "range": { "kind": "relative", "last": "30d" },
     "filters": [
-      { "field": "event_properties.country", "op": "eq", "value": "US" }
+      { "field": "country", "op": "eq", "value": "US" }
     ],
     "breakdownProperty": "event_properties.utm_source",
     "aggregation": { "kind": "count" }
@@ -229,7 +229,7 @@ Referencia de campos:
                                           aggregation=count_distinct anonymous_id,
                                           interval=day, range=last 30d
   • "¿Dónde aterrizan los usuarios de EE. UU.?" → event=$pageview,
-                                                   filters=[{event_properties.country, eq, "US"}],
+                                                   filters=[{country, eq, "US"}],
                                                    breakdownProperty=event_context.attribution.landing_page
 
 Devuelve buckets con gap-fill — un bucket vacío se renderiza como 0.`,
@@ -844,10 +844,17 @@ o el flag aún no existe — elige un default que signifique "lo que ven hoy".
 
 ## Paso 4 — registra el flag en Sheepit
 
-Abre https://www.goatech.ai/app/flags → New Flag. Matchea la key exacta.
-Default \`false\`. Status: \`active\`. (Los clientes que usan el CLI van a
-poder usar \`sheepit flags create show_new_pricing --default=false\` cuando
-aterrice el comando create; hoy create solo está en el dashboard.)
+Créalo acá mismo sin salir del chat:
+
+  flag_create {
+    key: "show_new_pricing", name: "Show New Pricing",
+    value_type: "boolean", default_value: false, platforms: ["web"]
+  }
+
+Matchea la key en el código exactamente. \`flag_create\` necesita una API
+key secreta con rol editor (\`sheepit login\` con una key \`lp_sec_*\`). O
+abre https://www.goatech.ai/app/flags → New Flag en el dashboard. Edita
+metadata después con \`flag_update\`; lista con \`flag_list\`.
 
 ## Paso 5 — préndelo para una cohort
 

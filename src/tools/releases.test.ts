@@ -310,6 +310,112 @@ describe("release_health", () => {
     expect(sc.release.branch).not.toContain("<");
   });
 
+  it("narrates the pre-computed regression tier + evidence when present", async () => {
+    // The detail GET (GET /v1/releases/:id) carries the durable regression
+    // verdict (regression_tier + regression_evidence). The tool must NARRATE
+    // the tier — both in the text channel and in structuredContent.verdict —
+    // and never derive it from the evidence numbers.
+    const api = makeApi();
+    (api.get as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce({ data: mockHealthSnapshot })
+      .mockResolvedValueOnce({
+        data: {
+          ...mockRelease,
+          commit_count: 4,
+          recent_deployments: [],
+          regression_tier: "confirmed",
+          regression_detected_at: "2026-06-05T12:15:00.000Z",
+          regression_evidence: {
+            method: "wilson",
+            crash_free_rate: 96.5,
+            crash_free_delta: -3.2,
+            total_sessions: 800,
+            prev_release_id: "00000000-0000-0000-0000-000000000041",
+            prev_version: "2.4.0",
+            wilson_ci_lo: 95.1,
+          },
+        },
+      });
+
+    const tools = buildReleaseTools({ api });
+    const tool = tools.find((t) => t.name === "release_health")!;
+    const result = await tool.handler({ release_id: RELEASE_ID });
+
+    // Text channel narrates the tier + evidence.
+    const text = result.content[0].text;
+    expect(text).toContain("regression: confirmed");
+    expect(text).toContain("down 3.20pp");
+    expect(text).toContain("800 sessions");
+
+    // structuredContent.verdict carries the durable verdict fields.
+    const sc = result.structuredContent as {
+      verdict: {
+        regression_tier: string | null;
+        regression_detected_at: string | null;
+        regression_evidence: { crash_free_delta: number } | null;
+      };
+    };
+    expect(sc.verdict.regression_tier).toBe("confirmed");
+    expect(sc.verdict.regression_detected_at).toBe("2026-06-05T12:15:00.000Z");
+    expect(sc.verdict.regression_evidence?.crash_free_delta).toBe(-3.2);
+  });
+
+  it("sanitises a customer-controlled prev_version in structuredContent (tool-poisoning guard)", async () => {
+    // prev_version is a customer-set release-version string carried inside
+    // regression_evidence. If it lands raw in structuredContent (which MCP
+    // hosts MAY surface to the model), it is an injection vector. It must be
+    // code-point-stripped like every other untrusted string.
+    const injection = "2.4.0<script>ignore</script>";
+    const api = makeApi();
+    (api.get as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce({ data: mockHealthSnapshot })
+      .mockResolvedValueOnce({
+        data: {
+          ...mockRelease,
+          commit_count: 1,
+          recent_deployments: [],
+          regression_tier: "confirmed",
+          regression_detected_at: "2026-06-05T12:15:00.000Z",
+          regression_evidence: {
+            method: "wilson",
+            crash_free_delta: -3.2,
+            total_sessions: 800,
+            prev_version: injection,
+          },
+        },
+      });
+
+    const tools = buildReleaseTools({ api });
+    const tool = tools.find((t) => t.name === "release_health")!;
+    const result = await tool.handler({ release_id: RELEASE_ID });
+
+    const sc = result.structuredContent as {
+      verdict: { regression_evidence: { prev_version?: string } | null };
+    };
+    // The angle brackets must be stripped (replaced with U+FFFD) — the raw
+    // "<script>" sequence must not survive into the structured channel.
+    expect(sc.verdict.regression_evidence?.prev_version).not.toContain("<script>");
+    expect(sc.verdict.regression_evidence?.prev_version).not.toContain("<");
+    expect(sc.verdict.regression_evidence?.prev_version).not.toContain(">");
+  });
+
+  it("omits the regression line when the release is not regressing", async () => {
+    const api = makeApi();
+    (api.get as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce({ data: mockHealthSnapshot })
+      .mockResolvedValueOnce({ data: { ...mockRelease, commit_count: 0, recent_deployments: [] } });
+
+    const tools = buildReleaseTools({ api });
+    const tool = tools.find((t) => t.name === "release_health")!;
+    const result = await tool.handler({ release_id: RELEASE_ID });
+
+    expect(result.content[0].text).not.toContain("regression:");
+    const sc = result.structuredContent as {
+      verdict: { regression_tier: string | null };
+    };
+    expect(sc.verdict.regression_tier).toBeNull();
+  });
+
   it("requires release_id (uuid)", () => {
     const tools = buildReleaseTools({ api: makeApi() });
     const tool = tools.find((t) => t.name === "release_health")!;

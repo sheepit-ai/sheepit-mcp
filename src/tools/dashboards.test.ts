@@ -13,7 +13,7 @@ function makeApi(): ApiClient {
 }
 
 describe("Dashboard tool registry", () => {
-  it("registers exactly the 11 documented tools", () => {
+  it("registers exactly the 12 documented tools", () => {
     const tools = buildDashboardTools({ api: makeApi() });
     const names = tools.map((t) => t.name).sort();
     expect(names).toEqual([
@@ -21,6 +21,7 @@ describe("Dashboard tool registry", () => {
       "dashboard_delete",
       "dashboard_get",
       "dashboard_list",
+      "dashboard_materialize",
       "dashboard_template_get",
       "dashboard_template_list",
       "dashboard_update",
@@ -238,6 +239,132 @@ describe("insights_query input validation", () => {
       query: { kind: "made-up-kind", event: "x" },
     });
     expect(res.success).toBe(false);
+  });
+});
+
+// ── dashboard_materialize ──────────────────────────────────────────────
+
+describe("dashboard_materialize input validation", () => {
+  const tools = buildDashboardTools({ api: makeApi() });
+  const tool = tools.find((t) => t.name === "dashboard_materialize")!;
+
+  const validTimeseries = {
+    type: "timeseries" as const,
+    name: "Sessions",
+    query: {
+      kind: "timeseries" as const,
+      event: "$session_start",
+      interval: "day" as const,
+      range: { kind: "relative" as const, last: "7d" as const },
+      aggregation: { kind: "count" as const },
+      filters: [],
+    },
+  };
+
+  const validFunnel = {
+    type: "funnel" as const,
+    name: "Signup Funnel",
+    query: {
+      kind: "funnel" as const,
+      steps: ["signup_started", "signup_completed"],
+      conversionWindow: "7d",
+      range: { kind: "relative" as const, last: "30d" as const },
+      filters: [],
+    },
+  };
+
+  const validRetention = {
+    type: "retention" as const,
+    name: "Weekly Retention",
+    query: {
+      kind: "retention" as const,
+      cohortEvent: "signup_completed",
+      returnEvent: "$session_start",
+      interval: "week" as const,
+      range: { kind: "relative" as const, last: "30d" as const },
+      filters: [],
+    },
+  };
+
+  it("accepts a minimal payload with one timeseries widget", () => {
+    const res = tool.inputSchema.safeParse({
+      name: "My Dashboard",
+      widgets: [validTimeseries],
+    });
+    expect(res.success).toBe(true);
+  });
+
+  it("accepts a payload with all three widget kinds", () => {
+    const res = tool.inputSchema.safeParse({
+      name: "Mixed Dashboard",
+      description: "All kinds",
+      widgets: [validTimeseries, validFunnel, validRetention],
+    });
+    expect(res.success).toBe(true);
+  });
+
+  it("rejects missing name", () => {
+    expect(tool.inputSchema.safeParse({ widgets: [validTimeseries] }).success).toBe(false);
+  });
+
+  it("rejects empty widgets array", () => {
+    expect(tool.inputSchema.safeParse({ name: "x", widgets: [] }).success).toBe(false);
+  });
+
+  it("rejects widgets array exceeding 24 items", () => {
+    const widgets = Array.from({ length: 25 }, (_, i) => ({
+      ...validTimeseries,
+      name: `Widget ${i}`,
+    }));
+    expect(tool.inputSchema.safeParse({ name: "x", widgets }).success).toBe(false);
+  });
+
+  it("rejects a widget with an invalid query kind", () => {
+    const res = tool.inputSchema.safeParse({
+      name: "x",
+      widgets: [{ ...validTimeseries, query: { kind: "made-up" } }],
+    });
+    expect(res.success).toBe(false);
+  });
+});
+
+describe("dashboard_materialize handler", () => {
+  const validWidget = {
+    type: "timeseries" as const,
+    name: "Sessions",
+    query: {
+      kind: "timeseries" as const,
+      event: "$session_start",
+      interval: "day" as const,
+      range: { kind: "relative" as const, last: "7d" as const },
+      aggregation: { kind: "count" as const },
+      filters: [],
+    },
+  };
+
+  it("POSTs to /v1/dashboards/materialize and returns dashboard + widgets in structuredContent", async () => {
+    const api = makeApi();
+    (api.post as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      data: {
+        id: "dash-mat-1",
+        name: "My Dashboard",
+        description: null,
+        widgets: [{ id: "w-1", type: "timeseries", name: "Sessions" }],
+      },
+    });
+
+    const tools = buildDashboardTools({ api });
+    const tool = tools.find((t) => t.name === "dashboard_materialize")!;
+    const result = await tool.handler({ name: "My Dashboard", widgets: [validWidget] });
+
+    expect(api.post).toHaveBeenCalledWith(
+      "/v1/dashboards/materialize",
+      expect.objectContaining({ name: "My Dashboard" }),
+    );
+    expect(result.content[0].text).toMatch(/Materialized dashboard/);
+    expect(result.content[0].text).toMatch(/1 widget/);
+    const sc = result.structuredContent as { dashboard: { id: string } };
+    expect(sc.dashboard.id).toBe("dash-mat-1");
   });
 });
 

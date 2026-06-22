@@ -9,21 +9,27 @@
  *     launch / pause / resume / complete / archive / results)
  *   - 7  Destination tools (catalog / list / get / create / update /
  *     delete / test)
- *   - 11 Dashboard tools (list / get / create / update / delete /
+ *   - 12 Dashboard tools (list / get / create / update / delete /
  *     template_list / template_get / widget_create / widget_update /
- *     widget_delete / insights_query) — Layer 4a
+ *     widget_delete / insights_query / dashboard_materialize) — Layer 4a
  *   - 3  Release-verdict tools (release_list / release_health /
  *     release_regressions) — pre-computed health verdicts + regression feed
+ *   - 4  Flag tools (flag_list / flag_get / flag_create / flag_update) —
+ *     agent-native flag setup over /v1/flags
+ *   - 4  Experiment tools (experiment_list / experiment_get /
+ *     experiment_create / experiment_update) — agent-native A/B test setup
+ *     over /v1/experiments
  *   - 1  Feedback tool (feedback_submit) — pain-point capture in stream
  *
  * Auth: reads `~/.sheepit/credentials.json` populated by `sheepit login`.
  * No additional setup needed — same OAuth round-trip works for every
- * surface.
+ * surface. Flag + experiment WRITES need a secret (`lp_sec_*`) key with
+ * editor role; a dev key can read but gets 403 on create/update.
  *
  * Layer 4 follow-ups still queued:
- *   - Flag tools (list / create / kill / restore + per-rule edit)
- *   - Experiment tools
- *   - Funnel + retention insight kinds (currently timeseries only)
+ *   - Per-rule / per-rollout flag edit (rules + rollout schedule)
+ *   - Flag kill / restore tools
+ *   - Experiment start / stop / results tools
  *   - Campaign cohort_id forward-compat once Cohort lands
  *
  * Usage:
@@ -50,8 +56,20 @@ import { buildFeedbackTools } from "./tools/feedback.js";
 import { buildEventCatalogTools } from "./tools/event-catalog.js";
 import { buildGroupTools } from "./tools/groups.js";
 import { buildReleaseTools } from "./tools/releases.js";
+import { buildDiscoveryTools } from "./tools/discovery.js";
+import { lazyToolsEnabled, selectAdvertisedTools } from "./lib/lazy-tools.js";
+import { buildFlagTools } from "./tools/flags.js";
+import { buildExperimentTools } from "./tools/experiments.js";
 import { runInstall } from "./install.js";
 import { SERVER_INSTRUCTIONS } from "./instructions.js";
+
+/** Appended to the server instructions when on-demand tool loading is on, so
+ *  the agent knows the listed tools are a core subset and how to reach the rest. */
+const LAZY_TOOLS_INSTRUCTIONS =
+  "\n\nTool discovery: only a core set of tools is listed upfront. If you need " +
+  "something not listed (dashboards, widgets, releases, user groups, campaign " +
+  "lifecycle, destinations beyond list), call search_tools(query) to find it, then " +
+  "load_tool(name) to get its input schema, then call that tool directly by name.";
 
 /** Threshold for the `dead` flag on `$mcp_session_ended`. A session that
  *  was open this long with zero tool calls is the failure mode the
@@ -80,15 +98,22 @@ async function runServer(): Promise<void> {
     ...buildDestinationTools({ api }),
     ...buildDashboardTools({ api }),
     ...buildReleaseTools({ api }),
+    ...buildFlagTools({ api }),
+    ...buildExperimentTools({ api }),
     ...buildFeedbackTools({ api, mcpVersion: VERSION }),
   ];
-  const toolMap = new Map(tools.map((t) => [t.name, t]));
+  // Discovery meta-tools (search_tools / load_tool) introspect the full
+  // registry. They live in the toolMap so they're always callable, but are
+  // only ADVERTISED in lazy mode (see selectAdvertisedTools below).
+  const discoveryTools = buildDiscoveryTools({ registry: tools });
+  const toolMap = new Map([...tools, ...discoveryTools].map((t) => [t.name, t]));
+  const lazy = lazyToolsEnabled();
 
   const server = new Server(
     { name: "sheepit-mcp", version: VERSION },
     {
       capabilities: { tools: {} },
-      instructions: SERVER_INSTRUCTIONS,
+      instructions: lazy ? SERVER_INSTRUCTIONS + LAZY_TOOLS_INSTRUCTIONS : SERVER_INSTRUCTIONS,
     },
   );
 
@@ -123,6 +148,15 @@ async function runServer(): Promise<void> {
 
   server.setRequestHandler(ListToolsRequestSchema, async () => {
     toolsListedCount += 1;
+    const advertised = selectAdvertisedTools(tools, discoveryTools, lazy).map((t) => ({
+      name: t.name,
+      title: t.title,
+      description: t.description,
+      inputSchema: zodToJsonSchema(t.inputSchema, { target: "openApi3" }) as Record<
+        string,
+        unknown
+      >,
+    }));
     void trackTelemetry(api, {
       event: "$mcp_tools_listed",
       properties: {
@@ -130,21 +164,17 @@ async function runServer(): Promise<void> {
         // Per-call ordinal — distinguishes "first list (discovery)" from
         // "later refreshes". Most healthy sessions list exactly once.
         listed_count: toolsListedCount,
+        // On-demand-loading measurement (HARNESS_PLAN § B): the before/after
+        // the eager-vs-lazy decision is made on. `schema_bytes` is the size of
+        // the advertised tool schemas — the per-session context tax.
+        lazy,
+        advertised_count: advertised.length,
+        schema_bytes: JSON.stringify(advertised).length,
       },
       namespace: "mcp",
       version: VERSION,
     });
-    return {
-      tools: tools.map((t) => ({
-        name: t.name,
-        title: t.title,
-        description: t.description,
-        inputSchema: zodToJsonSchema(t.inputSchema, { target: "openApi3" }) as Record<
-          string,
-          unknown
-        >,
-      })),
-    };
+    return { tools: advertised };
   });
 
   server.setRequestHandler(CallToolRequestSchema, async (req) => {
@@ -328,8 +358,9 @@ async function runServer(): Promise<void> {
     setTimeout(() => exit(1), 2_000).unref();
   });
 
+  const advertisedCount = selectAdvertisedTools(tools, discoveryTools, lazy).length;
   stderr.write(
-    `[sheepit-mcp] connected as ${creds.profileName}${creds.projectSlug ? ` (project: ${creds.projectSlug})` : ""} — ${tools.length} tools registered (session ${sessionId})\n`,
+    `[sheepit-mcp] connected as ${creds.profileName}${creds.projectSlug ? ` (project: ${creds.projectSlug})` : ""} — ${tools.length} tools registered${lazy ? `, ${advertisedCount} advertised (on-demand loading on)` : ""} (session ${sessionId})\n`,
   );
 }
 

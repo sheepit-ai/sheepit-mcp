@@ -13,6 +13,7 @@
  *
  * Sanitised fields (tool-poisoning vectors):
  *   release.version, release.pr_title, release.branch — customer-controlled
+ *   release.regression_evidence.prev_version — customer-controlled version str
  *   regression.version, regression.change_entity_key — flag/entity key
  *
  * Reference: src/lib/untrust.ts for the sanitise + wrap pattern.
@@ -25,7 +26,16 @@ import { type Tool, defineTool } from "./define.js";
 
 // ── Tool-poisoning vector fields ────────────────────────────────────────────
 // Fields that customers control and that round-trip through the LLM channel.
-const RELEASE_UNTRUSTED_FIELDS = ["version", "pr_title", "branch"];
+// `regression_evidence.prev_version` is a customer-controlled release-version
+// string carried inside the evidence object — it must be sanitised in the
+// structuredContent channel like every other untrusted string (the text channel
+// wraps it via wrapUntrusted separately). Nested dot-path supported by applyAtPath.
+const RELEASE_UNTRUSTED_FIELDS = [
+  "version",
+  "pr_title",
+  "branch",
+  "regression_evidence.prev_version",
+];
 const RELEASE_LIST_UNTRUSTED_FIELDS = RELEASE_UNTRUSTED_FIELDS.map((f) => `*.${f}`);
 // change_at and change_event_id are customer-emitted ($change_regression event_properties)
 // and must be treated as untrusted even though the API Zod tightens them to datetime/uuid.
@@ -38,6 +48,27 @@ const REGRESSION_UNTRUSTED_FIELDS = [
 ];
 
 // ── Response envelope shapes ────────────────────────────────────────────────
+
+/**
+ * Durable regression-evidence numbers carried on the release detail/list
+ * responses (Zod-parsed server-side; shape mirrors `regressionEvidenceSchema`
+ * in @goatech/shared). The numeric/enum fields are safe to surface as-is, but
+ * `prev_version` is a customer-controlled string — it IS sanitised in the
+ * structuredContent channel (see RELEASE_UNTRUSTED_FIELDS) and wrapped in the
+ * text channel, exactly like the top-level `version`.
+ */
+interface RegressionEvidence {
+  method?: string | null;
+  crash_free_rate?: number | null;
+  crash_free_delta?: number | null;
+  total_sessions?: number | null;
+  total_crashes?: number | null;
+  prev_release_id?: string | null;
+  prev_version?: string | null;
+  prev_sessions?: number | null;
+  wilson_ci_lo?: number | null;
+  [k: string]: unknown;
+}
 
 interface ReleaseItem {
   id: string;
@@ -56,6 +87,12 @@ interface ReleaseItem {
   pr_number: number | null;
   pr_title: string | null;
   branch: string | null;
+  // Durable two-tier regression verdict (matches ReleaseResponse in
+  // api-contracts.ts). null == not regressing. Numeric/enum evidence is safe
+  // to surface unsanitised (see RegressionEvidence note above).
+  regression_tier?: "emerging" | "confirmed" | null;
+  regression_detected_at?: string | null;
+  regression_evidence?: RegressionEvidence | null;
   deployed_at: string | null;
   created_at: string;
   [k: string]: unknown;
@@ -124,6 +161,28 @@ interface RegressionsEnvelope {
 
 interface ReleaseToolDeps {
   api: ApiClient;
+}
+
+/**
+ * Narrate the pre-computed regression verdict carried on a release. The tier
+ * ("emerging"/"confirmed") is computed server-side — we NARRATE it, we never
+ * derive it from the evidence numbers. Returns "" when not regressing so the
+ * caller can append unconditionally. `prev_version` is wrapped via wrapUntrusted
+ * (customer-controlled string); the numeric fields are surfaced as-is. The
+ * "down Npp" phrasing matches the web regression banner for a consistent
+ * customer mental model across surfaces.
+ */
+function regressionLine(r: ReleaseItem): string {
+  const tier = r.regression_tier;
+  if (tier !== "emerging" && tier !== "confirmed") return "";
+  const ev = r.regression_evidence ?? {};
+  const delta =
+    typeof ev.crash_free_delta === "number"
+      ? `down ${Math.abs(ev.crash_free_delta).toFixed(2)}pp`
+      : "n/a";
+  const prev = ev.prev_version ? ` vs ${wrapUntrusted(ev.prev_version)}` : "";
+  const sessions = typeof ev.total_sessions === "number" ? ` (${ev.total_sessions} sessions)` : "";
+  return `\n  regression: ${tier} — crash-free ${delta}${prev}${sessions}`;
 }
 
 // ── Input schemas ────────────────────────────────────────────────────────────
@@ -214,9 +273,15 @@ export function buildReleaseTools({ api }: ReleaseToolDeps): Tool[] {
                     typeof r.crash_free_rate === "number"
                       ? `${r.crash_free_rate.toFixed(2)}% cfr`
                       : "cfr n/a";
+                  // Compact regression marker — only when the pre-computed tier
+                  // says the release is regressing. Narrate the tier, don't derive it.
+                  const regr =
+                    r.regression_tier === "emerging" || r.regression_tier === "confirmed"
+                      ? ` ⚠ regression:${r.regression_tier}`
+                      : "";
                   return (
                     ` • ${wrapUntrusted(r.version)} [${r.platform}/${r.channel}] ` +
-                    `${verdict} score=${r.health_score ?? "?"} ${cfr} — id ${r.id}`
+                    `${verdict} score=${r.health_score ?? "?"} ${cfr}${regr} — id ${r.id}`
                   );
                 })
                 .join("\n");
@@ -252,6 +317,8 @@ export function buildReleaseTools({ api }: ReleaseToolDeps): Tool[] {
               pr_number: r.pr_number,
               pr_title: r.pr_title,
               branch: r.branch,
+              // Durable regression verdict (narrate, never derive). null == not regressing.
+              regression_tier: r.regression_tier ?? null,
               deployed_at: r.deployed_at,
               created_at: r.created_at,
             })),
@@ -272,6 +339,9 @@ export function buildReleaseTools({ api }: ReleaseToolDeps): Tool[] {
         "branch, commit count) and the delta vs the prior release. " +
         "health_status and health_score are authoritative — narrate " +
         "them, never derive your own verdict from the individual rates. " +
+        "When the release is regressing, also narrates the pre-computed regression confidence tier " +
+        "(emerging = drop seen, confidence building; confirmed = regression gate fired) plus its " +
+        "evidence (crash-free delta, prior version, sessions) — narrate the tier, never compute it. " +
         "conversion_rate may be null when business metrics are not instrumented for this project; " +
         "do not treat null as 0%.",
       inputSchema: healthInputSchema,
@@ -389,13 +459,21 @@ export function buildReleaseTools({ api }: ReleaseToolDeps): Tool[] {
                     `latency_delta=${typeof h.latency_delta_ms === "number" ? `${h.latency_delta_ms}ms` : "n/a"}\n`
                   : "  no prior release for comparison\n") +
                 `  commit: ${d.commit_sha ?? "n/a"}  branch: ${branchText}  ` +
-                `PR: ${typeof d.pr_number === "number" ? `#${d.pr_number} ${prTitleText}` : "n/a"}`,
+                `PR: ${typeof d.pr_number === "number" ? `#${d.pr_number} ${prTitleText}` : "n/a"}` +
+                // Narrate the pre-computed regression verdict (emerging/confirmed)
+                // when present. Empty string when not regressing.
+                regressionLine(d),
             },
           ],
           structuredContent: {
             verdict: {
               health_status: h.health_status,
               health_score: h.health_score,
+              // Durable regression verdict (narrate, never derive). Evidence is
+              // numeric/enum — safe to surface unsanitised.
+              regression_tier: d.regression_tier ?? null,
+              regression_detected_at: d.regression_detected_at ?? null,
+              regression_evidence: d.regression_evidence ?? null,
             },
             release: {
               id: d.id,

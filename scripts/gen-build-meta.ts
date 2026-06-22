@@ -35,6 +35,10 @@ function countTools(): number {
     if (!entry.isFile()) continue;
     if (!entry.name.endsWith(".ts")) continue;
     if (entry.name.endsWith(".test.ts")) continue;
+    // discovery.ts holds the on-demand-loading meta-tools (search_tools /
+    // load_tool), not product capabilities — exclude them so TOOL_COUNT (shown
+    // in help text as "N tools registered") reflects what the customer can do.
+    if (entry.name === "discovery.ts") continue;
     const text = readFileSync(join(toolsDir, entry.name), "utf8");
     const matches = text.match(DEFINE_TOOL_REGEX);
     if (matches) total += matches.length;

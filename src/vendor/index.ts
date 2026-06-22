@@ -29,6 +29,16 @@ export {
 // User groups
 export { createUserGroupSchema, userGroupListQuerySchema } from "./user-group-schemas.js";
 
+// Flags
+export { createFlagSchema, updateFlagSchema, flagListQuerySchema } from "./flag-schemas.js";
+
+// Experiments
+export {
+  createExperimentSchema,
+  updateExperimentSchema,
+  experimentListQuerySchema,
+} from "./experiment-schemas.js";
+
 // Dashboards / widgets / insights
 export {
   createDashboardSchema,
@@ -38,6 +48,8 @@ export {
   updateWidgetSchema,
   insightsQueryRequestSchema,
   templateIdSchema,
+  dashboardMaterializeSchema,
+  materializeWidgetSchema,
 } from "./dashboard-schemas.js";
 
 // Dashboard templates

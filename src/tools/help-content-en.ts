@@ -71,9 +71,9 @@ ${TOOL_COUNT} tools are registered:
   - 11 campaign_*       (list / get / create / update / preview / launch /
                          pause / resume / complete / archive / results)
   - 7  destination_*    (catalog / list / get / create / update / delete / test)
-  - 11 dashboard / widget / insights tools (list / get / create / update / delete /
+  - 12 dashboard / widget / insights tools (list / get / create / update / delete /
                          template_list / template_get / widget_create / widget_update /
-                         widget_delete / insights_query)
+                         widget_delete / insights_query / dashboard_materialize)
 
 Common workflows have ready recipes — call \`sheepit_quickstart\` with one of:
   send_email_campaign, create_dashboard, analyze_signups, ship_feedback,
@@ -204,7 +204,7 @@ without opening a UI. JSON-base allowlist is \`event_properties\` and
     "interval": "day",
     "range": { "kind": "relative", "last": "30d" },
     "filters": [
-      { "field": "event_properties.country", "op": "eq", "value": "US" }
+      { "field": "country", "op": "eq", "value": "US" }
     ],
     "breakdownProperty": "event_properties.utm_source",
     "aggregation": { "kind": "count" }
@@ -240,7 +240,7 @@ Field reference:
                                       aggregation=count_distinct anonymous_id,
                                       interval=day, range=last 30d
   • "Where do US users land?" → event=$pageview,
-                                 filters=[{event_properties.country, eq, "US"}],
+                                 filters=[{country, eq, "US"}],
                                  breakdownProperty=event_context.attribution.landing_page
 
 Returns gap-filled buckets — a missing time bucket renders as 0.`,
@@ -826,10 +826,17 @@ today".
 
 ## Step 4 — register the flag in Sheepit
 
-Open https://www.goatech.ai/app/flags → New Flag. Match the key exactly.
-Default value \`false\`. Status: \`active\`. (Customers running the CLI
-can use \`sheepit flags create show_new_pricing --default=false\` once
-the create command lands; today create is dashboard-only.)
+Create it right here without leaving the chat:
+
+  flag_create {
+    key: "show_new_pricing", name: "Show New Pricing",
+    value_type: "boolean", default_value: false, platforms: ["web"]
+  }
+
+Match the key in code exactly. \`flag_create\` needs a secret API key with
+editor role (\`sheepit login\` with a \`lp_sec_*\` key). Or open
+https://www.goatech.ai/app/flags → New Flag in the dashboard. Edit
+metadata later with \`flag_update\`; list with \`flag_list\`.
 
 ## Step 5 — turn it on for a cohort
 

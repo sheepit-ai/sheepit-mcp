@@ -19,6 +19,8 @@ actually send, plus their transitive Zod dependencies.
 | `campaign-schemas.ts`    | campaign create / update / launch / list                  |
 | `destination-schemas.ts` | destination create / update / test / list                 |
 | `user-group-schemas.ts`  | user-group create / list                                  |
+| `flag-schemas.ts`        | flag create / update / list                               |
+| `experiment-schemas.ts`  | experiment create / update / list                         |
 | `dashboard-schemas.ts`   | dashboard + widget CRUD + insights-query request          |
 | `dashboard-templates.ts` | starter-dashboard blueprints                              |
 | `index.ts`               | thin barrel — re-exports exactly what the tools import    |

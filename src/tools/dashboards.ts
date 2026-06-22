@@ -25,6 +25,7 @@ import {
   updateWidgetSchema,
   insightsQueryRequestSchema,
   templateIdSchema,
+  dashboardMaterializeSchema,
   DASHBOARD_TEMPLATE_BLUEPRINTS,
   findTemplateBlueprint,
 } from "../vendor/index.js";
@@ -65,14 +66,32 @@ interface WidgetEnvelope {
   };
 }
 
+type InsightsQueryEnvelopeData =
+  | {
+      kind: "timeseries";
+      series: Array<{ name: string; points: Array<{ bucketIso: string; value: number }> }>;
+      interval: string;
+      fromIso: string;
+      toIso: string;
+    }
+  | {
+      kind: "funnel";
+      steps: Array<{ event: string; count: number; percentage: number; dropOff: number | null }>;
+      overallConversion: number;
+      conversionWindow: string;
+      fromIso: string;
+      toIso: string;
+    }
+  | {
+      kind: "retention";
+      interval: string;
+      cohorts: Array<{ period: string; size: number; retention: (number | null)[] }>;
+      fromIso: string;
+      toIso: string;
+    };
+
 interface InsightsQueryEnvelope {
-  data: {
-    kind: string;
-    series: Array<{ name: string; points: Array<{ bucketIso: string; value: number }> }>;
-    interval: string;
-    fromIso: string;
-    toIso: string;
-  };
+  data: InsightsQueryEnvelopeData;
 }
 
 const dashboardIdParam = z.object({ id: z.string().uuid().describe("Dashboard UUID.") });
@@ -83,8 +102,26 @@ const widgetIdParam = z.object({
 
 // ── Helpers ─────────────────────────────────────────────────────────────
 
-/** Compress a timeseries result into a one-line summary the LLM can read aloud. */
-function summarizeTimeseries(d: InsightsQueryEnvelope["data"]): string {
+/** Compress an insights result into a one-line summary the LLM can read aloud. */
+function summarizeInsightsResult(d: InsightsQueryEnvelopeData): string {
+  if (d.kind === "funnel") {
+    const stepLines = d.steps
+      .map((s) => `${wrapUntrusted(s.event)}:${s.count}(${s.percentage}%)`)
+      .join(" → ");
+    return (
+      `funnel: ${d.steps.length} steps, overall=${d.overallConversion}% ` +
+      `(window=${d.conversionWindow}, ${d.fromIso} → ${d.toIso}). ${stepLines}`
+    );
+  }
+  if (d.kind === "retention") {
+    const cohortCount = d.cohorts.length;
+    const maxPeriods = Math.max(...d.cohorts.map((c) => c.retention.length), 0);
+    return (
+      `retention: ${cohortCount} cohorts, up to ${maxPeriods} ${d.interval} periods ` +
+      `(${d.fromIso} → ${d.toIso})`
+    );
+  }
+  // timeseries
   const totalPoints = d.series.reduce((acc, s) => acc + s.points.length, 0);
   const totalValue = d.series.reduce(
     (acc, s) => acc + s.points.reduce((sum, p) => sum + p.value, 0),
@@ -175,8 +212,9 @@ export function buildDashboardTools({ api }: DashboardsToolDeps): Tool[] {
       name: "dashboard_create",
       title: "Create a new (empty) dashboard",
       description:
-        "Create an empty dashboard with `name` and optional `description`. Returns the new id. Use widget_create afterward to add widgets, or use dashboard_template_get + a script of widget_create calls to materialize a template manually. " +
-        "If you want a fully-populated starter, use dashboard_template_list to see what's available, then dashboard_template_get to get the widget specs.",
+        "Create an empty dashboard with `name` and optional `description`. Returns the new id. " +
+        "Use widget_create afterward to add individual widgets, or use dashboard_materialize to create a dashboard with all widgets in one atomic call. " +
+        "To discover valid event names for queries, call event_catalog_canonical first.",
       inputSchema: createDashboardSchema,
       async handler(input) {
         const res = await api.post<DashboardEnvelope>("/v1/dashboards", input);
@@ -299,10 +337,16 @@ export function buildDashboardTools({ api }: DashboardsToolDeps): Tool[] {
       title: "Add a widget to a dashboard",
       description:
         "Create a new widget on the given dashboard. " +
-        "`type` is a widget type (V1: 'timeseries' only). " +
-        "`query` is an InsightsQuery — a discriminated union on `kind` (V1: 'timeseries' only). " +
-        "`viz` controls presentation (chartType: 'line' | 'bar' | 'area' | 'stacked_bar' | 'single_metric'). " +
-        "`position` defaults to a sensible {x,y,w,h} if omitted. Templates can't have widgets added via this tool.",
+        "`type` is a widget type: 'timeseries' | 'funnel' | 'retention'. " +
+        "`query` is an InsightsQuery — a discriminated union on `kind`:\n\n" +
+        "**timeseries** — `{ kind: 'timeseries', event, interval: 'minute'|'hour'|'day'|'week', range, filters?, breakdownProperty?, aggregation? }`\n" +
+        "**funnel** — `{ kind: 'funnel', steps: [eventA, eventB, ...], conversionWindow: '7d', range, filters? }` (2–10 ordered event names)\n" +
+        "**retention** — `{ kind: 'retention', cohortEvent, returnEvent, interval: 'day'|'week', range, filters? }`\n\n" +
+        "`viz` controls presentation:\n" +
+        "  timeseries: `{ kind: 'timeseries', chartType: 'line'|'bar'|'area'|'stacked_bar'|'single_metric' }`\n" +
+        "  funnel:     `{ kind: 'funnel', showCounts: true|false }`\n" +
+        "  retention:  `{ kind: 'retention', colorScale: 'heatmap'|'none' }`\n\n" +
+        "`position` auto-places at {x:0,y:0,w:4,h:3} if omitted. Templates can't have widgets added via this tool.",
       inputSchema: createWidgetSchema.extend({
         dashboard_id: z.string().uuid().describe("Target dashboard."),
       }),
@@ -358,36 +402,96 @@ export function buildDashboardTools({ api }: DashboardsToolDeps): Tool[] {
       },
     }),
 
+    // ── Materialize (atomic create-dashboard-with-widgets) ─────────────
+
+    defineTool({
+      name: "dashboard_materialize",
+      title: "Create a fully-configured dashboard from a single call",
+      description:
+        "Create a dashboard and all its widgets in ONE atomic operation — if any widget fails validation, " +
+        "the whole dashboard is rolled back (nothing persists). Use this for 'build me a dashboard that shows X' " +
+        "requests instead of calling dashboard_create + N × widget_create in sequence.\n\n" +
+        "**Workflow:**\n" +
+        "1. Call event_catalog_canonical to discover valid event names for your project.\n" +
+        "2. Compose your widget specs (each needs `type`, `name`, `query`, and optionally `viz` + `position`).\n" +
+        "3. Call dashboard_materialize once with the dashboard name + the full widgets array.\n\n" +
+        "**Widget `query` kinds:**\n\n" +
+        "timeseries: `{ kind: 'timeseries', event, interval: 'minute'|'hour'|'day'|'week', range, filters?, breakdownProperty?, aggregation? }`\n" +
+        "funnel:     `{ kind: 'funnel', steps: [eventA, eventB, ...], conversionWindow: '7d', range, filters? }` (2–10 events)\n" +
+        "retention:  `{ kind: 'retention', cohortEvent, returnEvent, interval: 'day'|'week', range, filters? }`\n\n" +
+        "**Widget `viz` shapes:**\n" +
+        "timeseries: `{ kind: 'timeseries', chartType: 'line'|'bar'|'area'|'stacked_bar'|'single_metric' }`\n" +
+        "funnel:     `{ kind: 'funnel', showCounts: true }`\n" +
+        "retention:  `{ kind: 'retention', colorScale: 'heatmap'|'none' }`\n\n" +
+        "`range` is `{ kind: 'relative', last: '1h'|'24h'|'7d'|'30d'|'90d' }` or `{ kind: 'absolute', fromIso, toIso }`. " +
+        "`position` auto-places if omitted. Max 24 widgets per call. " +
+        "To discover valid event names, call event_catalog_canonical first.",
+      inputSchema: dashboardMaterializeSchema,
+      async handler(input) {
+        const res = await api.post<{
+          data: {
+            id: string;
+            name: string;
+            description: string | null;
+            widgets: Array<{ id: string; type: string; name: string }>;
+          };
+        }>("/v1/dashboards/materialize", input);
+        const widgets = res.data.widgets ?? [];
+        return {
+          content: [
+            {
+              type: "text",
+              text:
+                `Materialized dashboard ${wrapUntrusted(res.data.name)} (id: ${res.data.id}) ` +
+                `with ${widgets.length} widget${widgets.length === 1 ? "" : "s"}: ` +
+                widgets.map((w) => `${wrapUntrusted(w.name)} (${w.type})`).join(", "),
+            },
+          ],
+          structuredContent: {
+            dashboard: sanitizeUntrustedFields(res.data, DASHBOARD_FIELDS),
+          },
+        };
+      },
+    }),
+
     // ── Insights query (the LLM power tool) ────────────────────────────
 
     defineTool({
       name: "insights_query",
-      title: "Run an arbitrary timeseries query against your events",
+      title: "Run an analytics query (timeseries, funnel, or retention) against your events",
       description:
         "Execute a one-shot InsightsQuery without saving it as a widget. " +
-        "Use this to answer questions like 'how many signups yesterday?' / 'errors-per-hour by app version this week?' / 'which utm_source converted best in the last 30 days?'. " +
-        // Describe the wire envelope explicitly — every field nests
-        // under `query`. Examples below mirror the shapes that pass
-        // `insightsQueryRequestSchema.safeParse()`.
-        "Input envelope: `{ environment_id?: uuid, query: { kind, event, interval, range, filters?, breakdownProperty?, aggregation? } }`. " +
-        "`query.kind` is always 'timeseries' (the v1 surface). " +
-        "`query.event` is an event name from event_catalog_canonical. " +
-        "`query.interval` is one of 'minute'|'hour'|'day'|'week'. " +
-        "`query.range` is either `{kind: 'relative', last: '1h'|'24h'|'7d'|'30d'|'90d'}` or `{kind: 'absolute', fromIso: iso, toIso: iso}` (note: the absolute keys are `fromIso`/`toIso`, both full ISO-8601 datetimes). " +
-        "`query.filters` is an array of `{field, op, value}`; field names are dot-paths under `event_properties` / `event_context` (e.g. 'event_properties.course_slug'). " +
-        "`query.breakdownProperty` is a single property path that splits the series (caps at 20 distinct values). " +
-        "`query.aggregation` is `{kind: 'count'}` (default) or `{kind: 'count_distinct', field: 'user_id'}`. " +
-        "Returns gap-filled buckets; a missing time bucket is rendered as 0.",
+        "Use this to answer questions like 'how many signups yesterday?' / 'errors-per-hour by app version this week?' / 'show me signup→enroll→complete funnel' / 'weekly retention since signup'. " +
+        "Three `query.kind` values are supported:\n\n" +
+        "**timeseries** — count events over time.\n" +
+        "  `{ kind: 'timeseries', event, interval, range, filters?, breakdownProperty?, aggregation? }`\n" +
+        "  `interval` is 'minute'|'hour'|'day'|'week'.\n" +
+        "  `aggregation` is `{kind:'count'}` (default) or `{kind:'count_distinct',field:'user_id'}`.\n\n" +
+        "**funnel** — step-to-step conversion within a conversion window.\n" +
+        "  `{ kind: 'funnel', steps: [eventA, eventB, ...], conversionWindow: '7d', range, filters? }`\n" +
+        "  `steps` is 2–10 ordered event names. `conversionWindow` is Nd|Nh|Nm (default '7d').\n" +
+        "  Returns per-step counts, %, drop-off, and overallConversion.\n\n" +
+        "**retention** — cohort grid showing % of users returning after N periods.\n" +
+        "  `{ kind: 'retention', cohortEvent, returnEvent, interval: 'day'|'week', range, filters? }`\n" +
+        "  Returns `cohorts[]` each with `period`, `size`, `retention[offset]`.\n\n" +
+        "`query.range` is either `{kind:'relative', last:'1h'|'24h'|'7d'|'30d'|'90d'}` or " +
+        "`{kind:'absolute', fromIso: iso, toIso: iso}`. " +
+        "`filters` is an array of `{field, op, value}`; field names are dot-paths (e.g. 'event_properties.course_slug').",
       inputSchema: insightsQueryRequestSchema,
       async handler(input) {
         const res = await api.post<InsightsQueryEnvelope>("/v1/insights/query", input);
-        // series.name comes from a group-by over customer-controlled
+        // Timeseries: series.name comes from a group-by over customer-controlled
         // event_properties (UTM values, custom prop names). Strip
         // dangerous code points before structuredContent exposes the
         // result to the host LLM.
-        sanitizeUntrustedFields(res.data, ["series.*.name"]);
+        if (res.data.kind === "timeseries") {
+          sanitizeUntrustedFields(res.data, ["series.*.name"]);
+        }
+        // Funnel: step event names come from the query input (server-validated),
+        // not from raw DB text. No sanitization needed beyond what the schema
+        // enforces at input time.
         return {
-          content: [{ type: "text", text: summarizeTimeseries(res.data) }],
+          content: [{ type: "text", text: summarizeInsightsResult(res.data) }],
           structuredContent: { result: res.data },
         };
       },
