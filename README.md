@@ -1,194 +1,238 @@
-# `@sheepit-ai/mcp`
+<!-- Logo: drop a centered wordmark/logo image here once the public mirror has an assets/ dir. -->
+<div align="center">
 
-MCP (Model Context Protocol) server for Sheepit. Lets Claude / Cursor / any
-MCP-compatible client drive your Sheepit project — campaigns, destinations,
-flags, dashboards, insights queries — directly from a chat.
+# @sheepit-ai/mcp
 
-The same `~/.sheepit/credentials.json` file `sheepit login` writes
-authenticates this server. One OAuth round-trip, both surfaces unlocked.
+_Let Claude, Cursor, and Codex drive your Sheepit project from the IDE._
 
-## 1.0.0 — npm scope rename + breaking install path
+[![npm version](https://img.shields.io/npm/v/@sheepit-ai/mcp)](https://www.npmjs.com/package/@sheepit-ai/mcp)
+[![CI](https://github.com/sheepit-ai/sheepit-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/sheepit-ai/sheepit-mcp/actions/workflows/ci.yml)
+[![license](https://img.shields.io/npm/l/@sheepit-ai/mcp)](./LICENSE)
 
-This release renames the package from `@goatech/mcp` to `@sheepit-ai/mcp`
-as part of the broader Sheepit product rebrand. The legal entity
-(GoaTech AI LLC) is unchanged; the npm scope is the customer-facing
-brand.
+</div>
 
-**Breaking changes (hard cutover — no legacy fallback):**
+A [Model Context Protocol](https://modelcontextprotocol.io) server that gives
+your AI coding assistant direct control of your Sheepit project — campaigns,
+flags, experiments, dashboards, releases, and insights queries — without
+leaving the editor.
 
-- **Package name** — `@goatech/mcp` → `@sheepit-ai/mcp`. Update your
-  IDE config + `npx` invocations.
-- **Binary** — `goatech-mcp` → `sheepit-mcp`.
-- **Credentials path** — `~/.goatech/credentials.json` →
-  `~/.sheepit/credentials.json`. **No automatic migration** —
-  `mv ~/.goatech/credentials.json ~/.sheepit/credentials.json` or
-  re-run `sheepit login`.
-- **Environment variables** — `GOATECH_API_KEY` / `GOATECH_PROFILE` /
-  `GOATECH_API_URL` → `SHEEPIT_API_KEY` / `SHEEPIT_PROFILE` /
-  `SHEEPIT_API_URL`. The old names are not honored as fallbacks.
-- **LLM-facing tool names** — `goatech_help` / `goatech_quickstart` →
-  `sheepit_help` / `sheepit_quickstart`. LLMs re-discover tool names
-  from `tools/list` on every session start, so no client-side change is
-  needed beyond restarting the IDE.
-- **IDE config key** — `mcpServers.goatech` → `mcpServers.sheepit`.
-  `sheepit-mcp install --yes` detects + migrates the old key
-  automatically (no `--force` required); the existing config file is
-  backed up to `<path>.bak.<unix-ms>.<pid>.<rand>` (mode 0600) before
-  any write, the write itself is atomic via tmp+fsync+rename, and
-  symlinks at the config path are refused.
+## Why it exists
 
-**Migration aid (operator step, after `@sheepit-ai/mcp@1.0.0`
-publishes):** the Sheepit team plans to also publish an exact-pin
-alias at `@goatech/mcp@1.0.0` that depends on `@sheepit-ai/mcp@1.0.0`,
-followed by `npm deprecate '@goatech/mcp@"<2.0.0"'`. Until that lands,
-existing `npx @goatech/mcp` invocations resolve to the old
-`@goatech/mcp@0.3.0` (different binary, different creds path) — so
-update your IDE config first.
+Sheepit holds your flags, experiments, growth campaigns, and product
+analytics. Acting on any of it normally means switching to the dashboard,
+clicking through forms, and copying values back to your code. This server
+removes that round-trip: the assistant already in your IDE reads and writes
+Sheepit for you. One `sheepit login` authenticates both the CLI and this MCP
+server, so there is no second key to manage and every action the assistant
+takes is auditable.
 
-**What did NOT change:**
+## Example
 
-- API URL (`api.goatech.ai`) — flips with the AWS migration on its own
-  cadence, not with this rename.
-- API key prefix (`lp_pub_*` / `lp_sec_*`) — production data + customer
-  `.env` files are scoped by it.
-- Legal entity name (`GoaTech AI LLC`) — invoices / contracts / billing.
+After installing (below), restart your IDE and ask your assistant in plain
+language:
 
-## Quick start (3 commands)
+> **You:** Launch the "Fall Promo" email campaign, but show me a preview first.
+
+The assistant calls `campaign_preview`, shows you the rendered subject and
+body plus the audience size, and waits. The preview returns a single-use
+token; `campaign_launch` requires that token, so the assistant physically
+cannot send a campaign you have not seen.
+
+> **You:** Did signups dip yesterday?
+
+The assistant calls `insights_query` against your event stream and answers
+with the number, no dashboard needed.
+
+> **You:** Roll out the `new-checkout` flag to 10% of users.
+
+The assistant calls `flag_get` to read the current state, then `flag_update`
+to set the rollout.
+
+## How it works
+
+1. `sheepit login` runs a PKCE OAuth flow in your browser and writes
+   `~/.sheepit/credentials.json`.
+2. `sheepit-mcp install` writes an MCP server entry into your IDE's config
+   file (backing up the existing file first).
+3. You restart your IDE. It launches `sheepit-mcp serve` over stdio.
+4. The server reads `~/.sheepit/credentials.json` (or `SHEEPIT_API_KEY` from
+   the environment) and authenticates to the Sheepit API.
+5. The assistant calls `tools/list` and discovers every available tool. New
+   sessions should call `sheepit_help` first for an overview.
+6. When you ask for something, the assistant calls the matching tool. Every
+   input is validated with Zod at request time, so an out-of-date client gets
+   a structured error instead of silent drift.
+
+## Install
+
+Three commands. The first two are real, published packages
+(`@sheepit-ai/cli`, `@sheepit-ai/mcp`).
 
 ```bash
-# 1. One-time OAuth login (PKCE — opens your browser)
+# 1. One-time OAuth login (opens your browser)
 npx @sheepit-ai/cli login
 
-# 2. Auto-write the MCP entry into your IDE config.
-#    Dry-run first; pass --yes to apply. Backs up the existing file.
+# 2. Write the MCP entry into your IDE config.
+#    The first command is a dry run; the second applies it.
 npx @sheepit-ai/mcp install
 npx @sheepit-ai/mcp install --yes
 
-# 3. Restart your IDE. In Claude / Cursor, ask:
-#    "what can I do with Sheepit?"
+# 3. Restart your IDE, then ask: "what can I do with Sheepit?"
 ```
 
-The first thing the LLM should call is `sheepit_help` — it returns a
-curated overview of every surface and how to chain tools together.
-For a concrete recipe, ask for `sheepit_quickstart` with one of:
-`send_email_campaign`, `create_dashboard`, `analyze_signups`,
-`ship_feedback`, `wire_webhook_destination`.
+`install` auto-detects your client. To target one explicitly:
 
-The CLI / MCP key the OAuth flow mints is stamped `source = "cli" | "mcp"`
-on the Sheepit side, so you can audit which tool produced any given event.
+```bash
+npx @sheepit-ai/mcp install --yes --client=claude-desktop   # Claude Desktop
+npx @sheepit-ai/mcp install --yes --client=cursor           # Cursor
+npx @sheepit-ai/mcp install --yes --client=codex            # Codex
+```
 
-## What the LLM can do
+`install` is idempotent (re-running with the entry already present is a
+no-op), backs up the existing config to `<path>.bak.<unix-ms>.<pid>.<rand>`
+(mode 0600) before writing, writes atomically via tmp+rename, and refuses to
+follow symlinks. Upgrading from a pre-1.0 `@goatech/mcp` install replaces the
+old `mcpServers.goatech` entry with `mcpServers.sheepit` in place.
 
-40 tools as of `1.0.0` (live build-time count is in
-`src/generated/build-meta.ts`; this README counter is bumped per release):
+### CLI reference
 
-- **2 Discovery tools** — `sheepit_help` (top-level "what is this?" or
-  a per-topic deep-dive) and `sheepit_quickstart` (concrete N-step
-  recipe for a goal). Call `sheepit_help` first when the user is new.
-- **1 Event-catalog tool** — `event_catalog_canonical`. Returns the
-  events Sheepit understands out of the box (plus the project's own
-  registered `EventSchema` rows) so the LLM knows which `event` names
-  are valid before building an `insights_query`.
-- **4 Group tools** — `group_list / create / add_member /
-remove_member`. Manage user groups (named cohorts) that audiences
-  and targeting rules reference.
-- **11 Campaign tools** — `campaign_list / get / create / update /
-preview / launch / pause / resume / complete / archive / results`.
-  Preview/launch is enforced via single-use snapshot tokens — the LLM
-  physically cannot launch a campaign without first running
-  `campaign_preview`.
-- **7 Destination tools** — `destination_catalog / list / get /
-create / update / delete / test`. Connectors live behind a typed
-  catalog so the LLM can't request a destination that isn't actually
-  wired (`webhook`, `resend`, …).
-- **11 Dashboard tools** — `dashboard_list / get / create / update /
-delete / template_list / template_get / widget_create /
-widget_update / widget_delete / insights_query`. `insights_query`
-  lets the LLM run arbitrary timeseries against `events_raw` so it
-  can answer "did signups dip yesterday?" without opening a UI.
-- **3 Release tools** — `release_list / release_health /
-release_regressions`. Surface the server's pre-computed release
-  health verdicts (healthy / degraded / critical) + the regression
-  feed so the LLM can narrate "is the latest release safe?" without
-  recomputing any math.
-- **1 Feedback tool** — `feedback_submit`. The LLM should call this
-  proactively when the user expresses frustration ("this is
-  confusing") or hits an obvious gap. Auto-stamps `source=mcp` +
-  version metadata so the Sheepit team's admin queue can filter
-  MCP-origin reports.
+```bash
+sheepit-mcp serve                              # default — stdio MCP server
+sheepit-mcp install                            # dry run: show what would change
+sheepit-mcp install --yes                      # apply
+sheepit-mcp install --force                    # overwrite an existing entry
+sheepit-mcp install --client=claude-desktop    # (or cursor | codex)
+sheepit-mcp version
+sheepit-mcp help
+```
 
-Breakdown total: 2 + 1 + 4 + 11 + 7 + 11 + 3 + 1 = **40**.
+## Tools
 
-## Telemetry & opt-out
+49 tools across 10 surfaces. The count is generated from the source at build
+time (`src/generated/build-meta.ts`), so it does not drift from the registry.
 
-The server emits coarse, **non-PII** usage events (`$mcp_session_started`,
-`$mcp_tools_listed`, `$mcp_tool_invoked`, `$mcp_session_ended`) to your
-own project so the Sheepit team — and you, in your dashboards — can see
-how the MCP is used and where it fails. Events carry the tool name,
-success/failure, duration, and a coarse error code only. **Never** your
-tool arguments, query bodies, or any customer data.
+| Surface       | Count | Tools                                                                                                                                                                 |
+| ------------- | ----- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Discovery     | 2     | `sheepit_help`, `sheepit_quickstart`                                                                                                                                  |
+| Event catalog | 1     | `event_catalog_canonical`                                                                                                                                             |
+| Groups        | 4     | `group_list`, `group_create`, `group_add_member`, `group_remove_member`                                                                                               |
+| Campaigns     | 11    | `campaign_list` / `get` / `create` / `update` / `preview` / `launch` / `pause` / `resume` / `complete` / `archive` / `results`                                        |
+| Destinations  | 7     | `destination_catalog` / `list` / `get` / `create` / `update` / `delete` / `test`                                                                                      |
+| Dashboards    | 12    | `dashboard_list` / `get` / `create` / `update` / `delete` / `template_list` / `template_get` / `materialize`, `widget_create` / `update` / `delete`, `insights_query` |
+| Experiments   | 4     | `experiment_list`, `experiment_get`, `experiment_create`, `experiment_update`                                                                                         |
+| Flags         | 4     | `flag_list`, `flag_get`, `flag_create`, `flag_update`                                                                                                                 |
+| Releases      | 3     | `release_list`, `release_health`, `release_regressions`                                                                                                               |
+| Feedback      | 1     | `feedback_submit`                                                                                                                                                     |
 
-To turn it off, set either of these in the environment the MCP server
-runs in (your IDE's `mcpServers.sheepit.env`, or your shell):
+Start with `sheepit_help` for a guided overview, or `sheepit_quickstart` with
+one of `send_email_campaign`, `create_dashboard`, `analyze_signups`,
+`ship_feedback`, `wire_webhook_destination` for a concrete step-by-step
+recipe.
+
+Two extra meta-tools (`search_tools`, `load_tool`) appear only in on-demand
+loading mode (below) and are excluded from the count.
+
+## On-demand tool loading (experimental, opt-in)
+
+By default the server advertises all tools, so their schemas load into your
+assistant's context every session. Set `SHEEPIT_MCP_LAZY_TOOLS=1` to advertise
+only a small core set plus two discovery tools (`search_tools`, `load_tool`);
+the rest stay callable but load their schemas on demand, which cuts upfront
+tool-schema context substantially. When the assistant needs a tool that is not
+listed, it calls `search_tools` to find it and `load_tool` to fetch its
+schema, then calls it by name.
+
+```bash
+SHEEPIT_MCP_LAZY_TOOLS=1   # advertise core + discovery tools only (default: off)
+```
+
+This is off by default while both modes are measured (the
+`$mcp_tools_listed` event carries `lazy`, `advertised_count`, and
+`schema_bytes`).
+
+## Telemetry and opt-out
+
+The server emits coarse, non-PII usage events (`$mcp_session_started`,
+`$mcp_tools_listed`, `$mcp_tool_invoked`, `$mcp_session_ended`) to your own
+project so you can see how the MCP is used and where it fails. Events carry the
+tool name, success or failure, duration, and a coarse error code only. They
+never carry your tool arguments, query bodies, or any customer data.
+
+To turn telemetry off, set either of these in the environment the server runs
+in (your IDE's `mcpServers.sheepit.env`, or your shell):
 
 ```bash
 DO_NOT_TRACK=1          # the cross-vendor consoledonottrack.com convention
 SHEEPIT_TELEMETRY=0     # Sheepit-specific switch (also accepts =false)
 ```
 
-When either is set, `track()` short-circuits to a no-op — no event
-leaves the process for any session or tool call. Telemetry already
-never throws and never blocks your tool calls; the opt-out just stops
-the emit entirely.
+When either is set, the emit short-circuits to a no-op. Telemetry already never
+throws and never blocks your tool calls; the opt-out stops the emit entirely.
 
-## On-demand tool loading (experimental, opt-in)
+## FAQ
 
-By default the server advertises all tools, so their schemas load into your
-agent's context every session. Set `SHEEPIT_MCP_LAZY_TOOLS=1` to advertise only
-a small **core** set plus two discovery tools (`search_tools`, `load_tool`); the
-rest stay callable but load their schemas on demand — ~65% less upfront tool-schema
-context. When you need a tool that isn't listed, the agent calls `search_tools` to
-find it and `load_tool` to fetch its schema, then calls it by name.
+**Is this published?** Yes. `@sheepit-ai/mcp` is on npm (latest `1.0.1`,
+MIT-licensed). The `npx` commands above resolve against the real package.
 
-```bash
-SHEEPIT_MCP_LAZY_TOOLS=1   # advertise core + discovery tools only (default: off)
-```
+**Which clients are supported?** Claude Desktop, Cursor, and Codex out of the
+box. The server speaks standard MCP over stdio, so any MCP-compatible client
+can run `sheepit-mcp serve` with a manual config entry.
 
-This is **off by default** while we measure both modes (the
-`$mcp_tools_listed` event now carries `lazy`, `advertised_count`, and
-`schema_bytes`).
+**Do I need a Sheepit account?** Yes. `sheepit login` authenticates against
+your Sheepit project. The same credentials file powers both the CLI and this
+server.
 
-## CLI
+**Does it send my data anywhere?** Only coarse, non-PII usage events to your
+own project, and you can turn those off (see Telemetry and opt-out). Tool
+arguments and query results are never included.
 
-```bash
-sheepit-mcp serve              # default — runs the stdio MCP server
-sheepit-mcp install            # dry-run: show what would change
-sheepit-mcp install --yes      # apply: writes IDE config + .bak.<ms>.<pid>.<rand>
-sheepit-mcp install --force    # overwrite an existing sheepit entry
-sheepit-mcp install --client=claude-desktop|cursor|codex
-sheepit-mcp version
-sheepit-mcp help
-```
+**I'm on `@goatech/mcp`. How do I upgrade?** See
+[Upgrading from `@goatech/mcp`](#upgrading-from-goatechmcp) below.
 
-`serve` reads `~/.sheepit/credentials.json`; falls back to
-`SHEEPIT_API_KEY` / `SHEEPIT_PROFILE` env vars if the file isn't present.
+**Where's the source?** [github.com/sheepit-ai/sheepit-mcp](https://github.com/sheepit-ai/sheepit-mcp).
 
-`install` is idempotent (re-running with the same MCP entry already
-present is a no-op) and conservative (it backs up existing configs to
-`<path>.bak.<unix-ms>.<pid>.<rand>` mode 0600 before writing,
-writes atomically via tmp+rename, and refuses to follow symlinks). It supports Claude Desktop,
-Cursor, and Codex out of the box. When upgrading from a pre-1.0
-`@goatech/mcp` install, the old `mcpServers.goatech` entry is replaced
-in-place with the new `mcpServers.sheepit` entry on `--yes`.
+## Upgrading from `@goatech/mcp`
+
+`1.0.0` renamed the package from `@goatech/mcp` to `@sheepit-ai/mcp` as part of
+the Sheepit product rebrand. The legal entity (GoaTech AI LLC) is unchanged;
+the npm scope is the customer-facing brand. This is a hard cutover with no
+legacy fallback:
+
+| Was                                                           | Now                                                       |
+| ------------------------------------------------------------- | --------------------------------------------------------- |
+| Package `@goatech/mcp`                                        | `@sheepit-ai/mcp`                                         |
+| Binary `goatech-mcp`                                          | `sheepit-mcp`                                             |
+| Credentials `~/.goatech/credentials.json`                     | `~/.sheepit/credentials.json`                             |
+| Env `GOATECH_API_KEY` / `GOATECH_PROFILE` / `GOATECH_API_URL` | `SHEEPIT_API_KEY` / `SHEEPIT_PROFILE` / `SHEEPIT_API_URL` |
+| Tools `goatech_help` / `goatech_quickstart`                   | `sheepit_help` / `sheepit_quickstart`                     |
+| Config key `mcpServers.goatech`                               | `mcpServers.sheepit`                                      |
+
+To migrate:
+
+1. Update your IDE config + any `npx` invocations to `@sheepit-ai/mcp`. Running
+   `sheepit-mcp install --yes` detects and migrates the old `mcpServers.goatech`
+   key automatically.
+2. Move your credentials: `mv ~/.goatech/credentials.json
+~/.sheepit/credentials.json`, or just re-run `sheepit login`.
+3. Rename any `GOATECH_*` env vars to `SHEEPIT_*`. The old names are not honored
+   as fallbacks.
+
+Restarting your IDE re-discovers the new tool names from `tools/list`, so no
+further client change is needed.
+
+What did **not** change: the API URL (`api.goatech.ai`), the API key prefix
+(`lp_pub_*` / `lp_sec_*`, which scopes production data and customer `.env`
+files), and the legal entity name (`GoaTech AI LLC`, used on invoices and
+contracts).
 
 ## Versioning
 
-This package follows Sheepit product releases. Major-version bumps
-signal either the MCP protocol moving, or a breaking change to the API
-surface the tools wrap (or, as in `1.0.0`, an npm-scope rename).
-Schemas are validated with Zod at request time so an out-of-date client
-gets a structured error rather than silent drift.
+This package follows Sheepit product releases. A major-version bump signals
+either the MCP protocol moving or a breaking change to the API surface the
+tools wrap (as in `1.0.0`, an npm-scope rename). Tool inputs are validated with
+Zod at request time, so an out-of-date client gets a structured error rather
+than silent drift.
 
 ## License
 
-MIT. Copyright (c) 2026 GoaTech AI LLC. See `LICENSE`.
+MIT. Copyright (c) 2026 GoaTech AI LLC. See [LICENSE](./LICENSE).
